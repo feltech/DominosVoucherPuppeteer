@@ -1,0 +1,12 @@
+{
+	"name": "CanterburyEvents",
+	"version": "1.0.0",
+	"description": "Calendar view of upcoming events detailed at canterbury.co.uk",
+	"license": "(LGPL-2.1)",
+	"dependencies": {
+		"moment": "*",
+		"lodash": "*",
+		"express": "*",
+		"logger": "*"
+	}
+}
