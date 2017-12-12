@@ -12,6 +12,12 @@ logger.format = (level, date, message)=> {
 };
 logger.setLevel("debug");
 
+/**
+ * Generate common TAKE10XX codes.
+ * 
+ * Dominos often has TAKE10XX codes (where XX are alphabetic characters) that give 10 GBP off 
+ * some value of order (commonly 20 or 30 GBP).
+ */
 function take10s() {
 	let generated = [],
 		alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""),
@@ -20,7 +26,7 @@ function take10s() {
 	for (i = 0; i < alphabet.length; i++) {
 		for (j = 0; j < alphabet.length; j++) {
 			generated.push({
-				code: "TAKE10" + alphabet[i] + alphabet[j], description: "Generated TAKE10 code"
+				code: "TAKE10" + alphabet[i] + alphabet[j], description: "Mystery TAKE10 code"
 			});
 		}
 	}
@@ -28,6 +34,9 @@ function take10s() {
 	return generated;
 }
 
+/**
+ * Fire up the Chrome headless browser and open a blank page.
+ */
 async function initBrowser() {
 	// Open browser.
 	const browser = await puppeteer.launch({
@@ -42,14 +51,26 @@ async function initBrowser() {
 	page.on('console', msg => logger.debug('PAGE LOG:', msg.text));
 }
 
+/**
+ * Alternative method of clicking on an element based on a javascript `MouseEvents`.
+ *  
+ * Puppeteer's  `click` sometimes simply doesn't work.
+ * 
+ * @param {String} selector CSS selector to click on.
+ */
 async function click(selector) {
 	return page.evaluate((selector)=>{
-		var evObj = document.createEvent('MouseEvents');
-		evObj.initEvent("click", true, false);
-		$(selector)[0].dispatchEvent(evObj);
+		var ev = document.createEvent('MouseEvents');
+		ev.initEvent("click", true, false);
+		document.querySelector(selector).dispatchEvent(ev);
 	}, selector);
 }
 
+/**
+ * Scrape voucher codes from hotukdeals.
+ * 
+ * @param {Integer} numPages number of pages of vouchers to scrape.
+ */
 async function getVouchers(numPages) {
 	let vouchers = [];
 	
@@ -109,6 +130,12 @@ async function getVouchers(numPages) {
 	return [...take10s(), ...vouchers];
 }
 
+/**
+ * Attempt each voucher code in turn on a test order at the Dominos UK website.
+ * 
+ * @param {String} postcode postcode to find local dominos store to check.
+ * @param {*} vouchers array of voucher objects.
+ */
 async function tryVouchers(postcode, vouchers) {
 	logger.info("Loading Dominos");
 	await page.goto("https://www.dominos.co.uk");			
@@ -196,31 +223,39 @@ async function tryVouchers(postcode, vouchers) {
 	return vouchers;
 }
 
-// Web app to respond to requests.
-const app = express();
-
-// Start the http server.
-const server = app.listen(3000, () => logger.info("Dominos Voucher app listening on port 3000"));
-
-// Express doesn't respond to signals without some help.
-["SIGINT", "SIGTERM"].forEach((sigName)=>{
-	process.on(sigName, ()=>{
-		logger.info("Received " + sigName);
-		stopped = true;
-		server.close(()=> logger.info("HTTP server stopped."));
-	});
-});
-
+// Initialise Chrome and start listening for requests.
 initBrowser().then(async ()=> {
-	try {
-		let vouchers = await getVouchers(2);
-		vouchers = await tryVouchers("CT27NY", vouchers);
-		// await tryVouchers("CT27NY", [
-		// 	{code: "TESTTEST", description: "broken"},
-		// 	{code: "DOMIBETA", description: "test"}, {code: "TAKE10CT", description: "test2"}
-		// ]);
-	} catch (e) {
-		logger.error("Error getting codes", e);
-		await page.screenshot({path: "error.png", fullPage: true});
-	}
+	
+	// Web app to respond to requests.
+	const app = express();
+
+	// Start the http server.
+	const server = app.listen(
+		3000, () => logger.info("Dominos Voucher app listening on port 3000")
+	);
+
+	app.get("/scrape/:postcode", (req, res)=>{
+		
+	});
+
+	// Express doesn't respond to signals without some help.
+	["SIGINT", "SIGTERM"].forEach((sigName)=>{
+		process.on(sigName, ()=>{
+			logger.info("Received " + sigName);
+			stopped = true;
+			server.close(()=> logger.info("HTTP server stopped."));
+		});
+	});
+
+	// try {
+	// 	let vouchers = await getVouchers(2);
+	// 	vouchers = await tryVouchers("CT27NY", vouchers);
+	// 	// await tryVouchers("CT27NY", [
+	// 	// 	{code: "TESTTEST", description: "broken"},
+	// 	// 	{code: "DOMIBETA", description: "test"}, {code: "TAKE10CT", description: "test2"}
+	// 	// ]);
+	// } catch (e) {
+	// 	logger.error("Error getting codes", e);
+	// 	await page.screenshot({path: "error.png", fullPage: true});
+	// }
 });
