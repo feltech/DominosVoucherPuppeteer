@@ -1,0 +1,9 @@
+{
+    "require": {
+        "slim/slim": "^3.9",
+        "usmanhalalit/pixie": "2.*@dev",
+        "slim/php-view": "^2.2",
+        "rmccue/requests": "^1.7",
+        "monolog/monolog": "^1.23"
+    }
+}

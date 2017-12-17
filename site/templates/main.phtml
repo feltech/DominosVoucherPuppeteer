@@ -1,0 +1,152 @@
+<!DOCTYPE HTML>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<link
+		rel='stylesheet'
+		href='https://maxcdn.bootstrapcdn.com/bootswatch/3.3.7/paper/bootstrap.min.css' />	
+	<script src='https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js'></script>
+	<script
+		src="https://code.jquery.com/jquery-3.2.1.min.js"
+		integrity="sha256-hwg4gsxgFZhOsEEamdOYGBf13FyQuiTwlAQgxVSNgt4="
+		crossorigin="anonymous"
+	></script>
+	<script src='https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.4/lodash.min.js'></script>
+	<script
+		src='https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.19.3/moment-with-locales.min.js'
+	></script>	
+	<title>Dominos UK Voucher Puppeteer</title>
+</head>
+<body>
+<nav class="navbar navbar-default">
+	<div class="container-fluid">
+		<div class="navbar-header">
+			<a class="navbar-brand" href="#">
+				Dominos (UK) Voucher Puppeteer 
+			</a>
+		</div>
+	</div>
+</nav>
+<div class="jumbotron">
+	<div class="container">
+		<h1>Dominos UK Voucher Puppeteer</h1> 
+		<p>working voucher codes for Dominos Pizza UK, searchable by postcode</p>
+	</div>
+</div>
+<div class="container">
+	<form id="voucher-search">
+		<div class="form-group">
+			<input 
+				type="text" class="form-control" id="inputPostcode" placeholder="Enter postcode..."
+			/>
+		</div>	
+		<button id="voucher-search-submit" type="submit" class="btn btn-default">Search</button>
+	</form>
+</div>
+<div id="search-results" class="container" style="visibility: hidden">
+	<div class="row">
+		<div class="col-md-4">
+			<dl id="last-updated">
+				<dt>Vouchers list is up to date</dt> 
+				<dd id="vouchers-uptodate"></dd>		
+				<dt>Local branch for <span class='postcode-search'></span> is known</dt> 
+				<dd id="branch-known"></dd>
+				<dt>Working vouchers for <span class='postcode-search'></span> up to date</dt> 
+				<dd id="working-uptodate"></dd>
+				<dt>Vouchers list last updated</dt> 
+				<dd id="vouchers-last-updated"></dd>		
+				<dt>Working <span class='postcode-search'></span> vouchers last updated</dt> 
+				<dd id="branch-last-updated"></dd>
+			</dl>		
+		</div>
+		
+		<div class="col-md-8">
+			<h5>Vouchers</h5>
+			<h6 id="bot-status"></h6>
+			<dl id="voucher-list">
+			</dl>
+		</div>
+	</div>
+</div>
+<script>
+	(function () {
+		var $botStatus = $('#bot-status'),
+			tmpl = _.template(
+				'<% _.forEach(vouchers, function (voucher) { %>' + 
+					'<dt><%= voucher.code %></dt><dd><%- voucher.description %></dd>' +
+				'<% }); %>'), 
+			timerHandle;
+
+		function render(vouchers) {
+			$('#voucher-list').empty();
+			if (vouchers.length)
+				$('#voucher-list').append($(tmpl({vouchers: vouchers})));
+			else 
+				$('#voucher-list').append($('<dt>Sorry, no vouchers found</dt>'));
+		}
+
+		function check(postcode) {
+			$.getJSON("/uptodate/" + postcode).then(function (status) {
+				$('#vouchers-last-updated').html(
+					moment(status.vouchersLastUpdated * 1000).fromNow()
+				);
+				if (status.branchLastUpdated) {
+					$('#branch-last-updated').html(
+						moment(status.branchLastUpdated * 1000).fromNow()
+					);						
+				} else {
+					$('#branch-last-updated').html("never");
+				}
+
+				$('#vouchers-uptodate').html(status.vouchersUpToDate ? "yes" : "no");
+				$('#branch-known').html(status.branchLastUpdated ? "yes" : "no");
+				$('#working-uptodate').html(status.branchUpToDate ? "yes" : "no");
+
+				if (status.updating === "vouchers") {
+					$botStatus.html("Updating the main voucher list...");
+				} else if (status.updating === "branch") {
+					$botStatus.html("Locating your local branch...");
+				} else if (status.updating === "working") {
+					$botStatus.html("Checking for working vouchers...");
+				}
+				
+				if (!status.vouchersUpToDate || !status.branchUpToDate) {
+					timerHandle = setTimeout(function() {
+						check(postcode);
+					}, 5000);
+
+				} else {
+					$botStatus.html("Done");
+
+					$.getJSON("/working/" + this.postcode).then(function (working) {
+						$botStatus.html("Found " + working.length + " working vouchers.");
+						render(working);
+					});
+				}
+				$('#search-results').css('visibility', 'visible');
+			});		
+		}
+
+		$('#voucher-search').on('submit', function () {
+			var postcode = document.getElementById('inputPostcode').value.toUpperCase();
+			$('#voucher-search-submit').attr('disabled', true);
+			$('#voucher-list').empty();
+			$('.postcode-search').html(postcode)
+
+			clearTimeout(timerHandle);
+
+			$.getJSON("/working/" + postcode).then(function (working) {
+				render(working);
+				check(postcode);
+				$('#voucher-search-submit').removeAttr('disabled');
+			});
+
+			return false;
+		});
+	}());
+</script>
+</body>
+</html>
