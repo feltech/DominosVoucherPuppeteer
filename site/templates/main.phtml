@@ -105,7 +105,12 @@
 				$('#branch-known').html(status.branchLastUpdated ? "yes" : "no");
 				$('#working-uptodate').html(status.branchUpToDate ? "yes" : "no");
 
-				if (status.updating === "vouchers") {
+				if (status.error) {
+					$botStatus.html(
+						"The dominos bot is poorly, the boss has been notified." + 
+						" Please try again later."
+					);
+				} else if (status.updating === "vouchers") {
 					$botStatus.html("Updating the main voucher list...");
 				} else if (status.updating === "branch") {
 					$botStatus.html("Locating your local branch...");
@@ -121,7 +126,7 @@
 				} else {
 					$botStatus.html("Done");
 
-					$.getJSON("/working/" + this.postcode).then(function (working) {
+					$.getJSON("/working/" + postcode).then(function (working) {
 						$botStatus.html("Found " + working.length + " working vouchers.");
 						render(working);
 					});

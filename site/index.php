@@ -46,7 +46,8 @@ $app->post('/vouchers', function (Request $request, Response $response) {
 	$body = $request->getParsedBody();
 	$this->logger->debug("Updating voucher list with ". count($body) . " vouchers");
 	$this->db->transaction(function ($db) use ($body) {
-		$db->table('vouchers')->insertIgnore($body);
+		$db->table('vouchers')->delete();
+		$db->table('vouchers')->insert($body);
 		$db->table('vouchers_last_updated')->update(['last_updated'=>time()]);
 	});
 	return $response;
@@ -107,10 +108,30 @@ $app->get('/working/{postcode}', function (Request $request, Response $response,
 	return $response->withJson($rows);
 });
 
+$app->post('/error', function (Request $request, Response $response, $args) {
+	$body = $request->getParsedBody();
+	$this->db->table('error')->update(['description'=>$body['description']]);
+	return $response->withStatus(204);	
+});
+
 $app->get('/uptodate/{postcode}', function (Request $request, Response $response, $args) {
 	// Check if vouchers haven't been updated in a day
 	$postcode = strtoupper($args['postcode']);
 	$timestamp = time();
+
+	$vouchers_last_updated = $this->db->table(
+		'vouchers_last_updated'
+	)->select('*')->first();
+
+	$vouchers_uptodate = true;
+	if ($vouchers_last_updated === null) {
+		$vouchers_uptodate = false;
+	} else {
+		$vouchers_last_updated = (int)$vouchers_last_updated->last_updated;
+		if (time() - $vouchers_last_updated > 24*3600) {
+			$vouchers_uptodate = false;
+		}
+	}
 
 	$branch_last_updated = $this->db->table('postcodes')->join(
 		'branches', 'branches.id', '=', 'postcodes.branch_id'
@@ -126,24 +147,15 @@ $app->get('/uptodate/{postcode}', function (Request $request, Response $response
 		$branch_uptodate = false;
 	} else {
 		$branch_last_updated = (int)$branch_last_updated->last_updated;
-		if (time() - $branch_last_updated > 24*3600) {
+		if (
+			time() - $branch_last_updated > 24*3600 || // branch out of date.
+			$vouchers_last_updated > $branch_last_updated  // vouchers updated more recently.
+		) {
 			$branch_uptodate = false;
 		}
 	}
 
-	$vouchers_last_updated = $this->db->table(
-		'vouchers_last_updated'
-	)->select('*')->first();
-
-	$vouchers_uptodate = true;
-	if ($vouchers_last_updated === null) {
-		$vouchers_uptodate = false;
-	} else {
-		$vouchers_last_updated = (int)$vouchers_last_updated->last_updated;
-		if (time() - $vouchers_last_updated > 24*3600) {
-			$vouchers_uptodate = false;
-		}
-	}
+	$error = $this->db->table('error')->select('description')->first()->description === "";
 
 	$updating = "other";
 	if ($vouchers_uptodate == false) {
@@ -171,7 +183,7 @@ $app->get('/uptodate/{postcode}', function (Request $request, Response $response
 	return $response->withJson([
 		'vouchersLastUpdated'=>$vouchers_last_updated, 'branchLastUpdated'=>$branch_last_updated, 
 		'vouchersUpToDate'=>$vouchers_uptodate, 'branchUpToDate'=>$branch_uptodate,
-		'updating'=>$updating
+		'updating'=>$updating, '$error'=>$error
 	]);
 });
 

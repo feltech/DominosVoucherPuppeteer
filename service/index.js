@@ -51,12 +51,12 @@ class Scraper {
 			logger.info("Updating voucher list");
 			this.processIfNotInProgress(res, ()=>this.getVouchers(VOUCHER_PAGES));
 		});
-	
+
 		// Start the http server.
 		const server = app.listen(
 			3000, () => logger.info("Dominos Voucher app listening on port 3000")
 		);
-	
+
 		// Express doesn't respond to signals without some help.
 		["SIGINT", "SIGTERM"].forEach((sigName)=>{
 			logger.debug("Adding signal handler for " + sigName);
@@ -66,7 +66,7 @@ class Scraper {
 				server.close(()=> logger.info("HTTP server stopped."));
 			});
 		});
-		
+
 		let site_url = "https://" + process.env.site_host + "/vouchers";
 		logger.info("First run: getting vouchers from site at " + site_url);
 		request(site_url, this.siteGetOpts).then(
@@ -75,31 +75,34 @@ class Scraper {
 				this.inProgress = false;
 				logger.info("Initialised with " + this.vouchers.length + " vouchers");
 				logger.debug("Initial voucher list: ", this.vouchers)
-			}, 
+			},
 			(e)=>logger.error("Failed to update vouchers from site", e)
-		);		
+		);
+
+		logger.debug("Clearing any previous error state");
+		this.postToSite("error", {description: ""});
 	}
 
 	/**
 	 * Start function or respond with error if a function is already running.
-	 * 
+	 *
 	 * @param {Response} res express response object.
 	 * @param {Function} fn function to execute.
 	 */
 	processIfNotInProgress(res, fn) {
 		if (this.inProgress) {
-			logger.debug("Attempting to execute when already running")
-			res.status(400).send("Already processing");				
+			logger.debug("Already running, aborting.")
+			res.status(400).send("Already processing");
 		} else {
 			this.inProgress = true;
 			fn();
-			res.status(204).end();								
-		}		
+			res.status(204).end();
+		}
 	}
 
 	/**
 	 * Scrape voucher codes from hotukdeals.
-	 * 
+	 *
 	 * @param {Integer} numPages number of this.pages of vouchers to scrape.
 	 */
 	async getVouchers(numPages) {
@@ -107,16 +110,16 @@ class Scraper {
 		try {
 			let vouchers = [],
 				siteResponse;
-			
+
 			logger.info("Loading hotukdeals");
 			await this.page.goto(
 				"https://www.hotukdeals.com/vouchers/dominos.co.uk", {waitUntil: "domcontentloaded"}
-			);			
+			);
 			logger.info("Setting cookie to show vouchers and reloading page");
 			await this.page.setCookie({name: "show_voucher", value: "true"});
 			// Reload the this.page.
 			await this.page.reload({waitUntil: "domcontentloaded"});
-					
+
 			for (let pageNum = 0; pageNum < numPages; pageNum++) {
 				if (this.stopped)
 					return;
@@ -164,7 +167,7 @@ class Scraper {
 			}
 
 			logger.debug("Found vouchers" + JSON.stringify(vouchers));
-			
+
 			if (INCLUDE_TAKE10S)
 				vouchers = [...Scraper.take10s(), ...vouchers];
 
@@ -172,70 +175,71 @@ class Scraper {
 
 		} catch (e) {
 			this.logError(e);
-			this.inProgress = false;			
+			this.inProgress = false;
 			return;
 		} finally {
 			this.page = null;
 		}
 
 		await this.postToSite("vouchers", this.vouchers);
-	}	
+	}
 
 	/**
 	 * Get local Dominos branch.
-	 * 
+	 *
 	 * @param {String} postcode postcode to find local dominos branch.
 	 */
 	async branchID(postcode) {
 		let branch_id;
 		await this.initBrowser();
 		try {
-			branch_id = await this.loadBranch(postcode);			
+			branch_id = await this.loadBranch(postcode);
 		} catch (e) {
 			this.logError(e);
-			this.inProgress = false;			
+			this.inProgress = false;
 			return;
 		} finally {
 			this.page = null;
 		}
 
 		await this.postToSite("branch", {branch_id, postcode});
-	}	
+	}
 
 	/**
 	 * Attempt each voucher code in turn on a test order at the Dominos UK website.
-	 * 
+	 *
 	 * @param {String} postcode postcode to find local dominos store to check.
 	 * @param {Array[Object]} vouchers array of voucher objects.
 	 */
 	async workingVouchers(postcode, vouchers) {
 		let branch_id;
 		await this.initBrowser();
-		try {			
+		try {
 			branch_id = await this.loadBranch(postcode);
-		
-			if (await this.page.$("[data-store-id]")) {
-				logger.debug("Clicking to select first branch in list");
-				await this.page.click("article.store-details button.btn-primary");
-			}	
+
 			if (await this.page.$(".store-finder-alert", {visible: true, timeout: 1000}))
 				throw new StoreClosedError();
 
+			if (await this.page.$("[data-store-id]")) {
+				logger.debug("Clicking to select first branch in list");
+				await this.page.click("article.store-details button.btn-primary");
+			}
+
 			logger.debug("Waiting for menu button");
-			await this.page.waitForSelector("#menu-selector");		
+			await this.page.waitForSelector("#menu-selector");
 			logger.debug("Clicking menu button");
-			await this.page.click("#menu-selector");	
+			await this.page.click("#menu-selector");
 			logger.debug("Waiting for menu to show");
 			await this.page.waitForSelector("button[resource-name='AddToBasket']");
-			logger.debug("Dismiss popup");	
+			logger.debug("Dismiss popup");
 			try {
 				await this.page.waitForSelector("i.arrival-close", {visible: true, timeout: 1000});
 				await this.page.click("i.arrival-close");
 			} catch (e) {
 				logger.debug("No popup found")
-			}		
+			}
 			logger.debug("Remove popup iframes");
-			await this.page.evaluate(()=>$(".yie-holder").remove());	
+			await this.page.evaluate(()=>$(".yie-holder").remove());
 			logger.debug("Adding a pizza to the basket");
 			await this.page.click("button[resource-name='AddToBasket']");
 			logger.debug("Waiting for pizza to be added to basket");
@@ -246,7 +250,7 @@ class Scraper {
 			await this.page.waitForSelector(".voucher-code-input > form > input", {visible: true});
 			logger.debug("Waiting for button to be visible");
 			await this.page.waitForSelector("footer > button", {visible: true});
-			
+
 			logger.info("Entering codes");
 			for (let voucher of vouchers) {
 				if (this.stopped)
@@ -259,6 +263,17 @@ class Scraper {
 				await this.page.click("footer > button");
 				logger.debug("Waiting until code applied");
 				await this.page.waitForSelector("footer > button[disabled]", {hidden: true});
+				logger.debug("Checking for voucher choice modal");
+				
+				try {
+					await this.page.waitForSelector(
+						'div.voucher-choice', {timeout: 10, visible: true}
+					);
+					logger.debug("Clicking voucher choice modal");
+					await this.page.click('div.voucher-choice button');
+				} catch (e)	{
+					logger.debug("No voucher choice modal visible");
+				}
 				logger.debug("Getting voucher success status");
 				voucher.status = await this.page.evaluate(()=>{
 					return $("div.voucher-code-input > p.help-block").text().trim();
@@ -287,66 +302,66 @@ class Scraper {
 						await this.page.waitForSelector(
 							"[data-voucher] .basket-product-actions button", {hidden: true}
 						);
-					}		
+					}
 				}
 			}
-		
+
 			logger.debug("Final voucher state:\n" + JSON.stringify(vouchers));
 			vouchers = vouchers.filter((v)=>v.valid);
 			logger.info(
 				"Working vouchers:" + vouchers.map((v)=>"\n[" + v.code + "] " + v.description)
-			);			
+			);
 		} catch (e) {
+			// TODO: handle store closed state
+			if (e instanceof StoreClosedError) 
+				throw e;
 			this.logError(e);
-			this.inProgress = false;			
-			return;
+			this.inProgress = false;
 		} finally {
 			this.page = null;
-		}		
+		}
 
 		await this.postToSite("working", {branch_id, vouchers});
 	}
 
 	/**
 	 * Load local Dominos branch.
-	 * 
+	 *
 	 * @param {String} postcode postcode to find local dominos branch.
 	 */
 	async loadBranch(postcode) {
 		logger.info("Loading Dominos for postcode " + postcode);
-		await this.page.goto("https://www.dominos.co.uk");			
+		await this.page.goto("https://www.dominos.co.uk");
 		logger.debug("Waiting for store search input");
 		await this.page.waitForSelector("#store-finder-search");
 		logger.debug("Typing postcode");
 		await this.page.type("#store-finder-search input[type='text']", postcode);
 		logger.debug("Click to find branch");
 		await this.page.click("#btn-delivery");
-		logger.debug("Waiting for branch selection");
 		try {
-			await this.page.waitForSelector("[data-store-id]", {timeout: 1000});
-		} catch (e) {
-			logger.debug("Branch auto-selected");		
-		}
-		if (await this.page.$("[data-store-id]")) {
-			logger.debug("Getting store ID from button");
-			return await this.page.evaluate(()=>$("[data-store-id]").first().data().storeId);
-		} else {
 			logger.debug("Waiting for menu button");
-			await this.page.waitForSelector("#menu-selector");
+			await this.page.waitForSelector("#menu-selector", {timeout: 5000});
 			logger.debug("Getting store ID from javascript")
 			await this.page.waitFor(
-				()=>window.initalStoreContext && 
+				()=>window.initalStoreContext &&
 					window.initalStoreContext.sessionContext.storeId
 			);
 			return await this.page.evaluate(
 				()=>window.initalStoreContext.sessionContext.storeId
 			);
+		} catch (e) {
+			logger.debug("Branch closed, hopefully");
+			if (await this.page.$("[data-store-id]")) {
+				logger.debug("Getting store ID from button");
+				return await this.page.evaluate(()=>$("[data-store-id]").first().data().storeId);
+			}
+			throw e;
 		}
-	}	
-	
+	}
+
 	/**
 	 * Send data to main site to store in it's database.
-	 * 
+	 *
 	 * @param {String} endpoint REST url endpoint to post to
 	 * @param {Object} data the data to post
 	 */
@@ -362,7 +377,7 @@ class Scraper {
 				response.statusCode
 			);
 		} finally {
-			this.inProgress = false;			
+			this.inProgress = false;
 		}
 	}
 
@@ -390,18 +405,18 @@ class Scraper {
 			this.logError(e);
 		}
 	}
-	
+
 	/**
 	 * Generate common TAKE10XX codes.
-	 * 
-	 * Dominos often has TAKE10XX codes (where XX are alphabetic characters) that give 10 GBP off 
+	 *
+	 * Dominos often has TAKE10XX codes (where XX are alphabetic characters) that give 10 GBP off
 	 * some value of order (commonly 20 or 30 GBP).
 	 */
 	static take10s() {
 		let generated = [],
 			alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""),
 			i,j;
-	
+
 		for (i = 0; i < alphabet.length; i++) {
 			for (j = 0; j < alphabet.length; j++) {
 				generated.push({
@@ -409,15 +424,15 @@ class Scraper {
 				});
 			}
 		}
-	
+
 		return generated;
-	}	
+	}
 
 	/**
 	 * Alternative method of clicking on an element based on a javascript `MouseEvents`.
-	 *  
+	 *
 	 * Puppeteer's  `click` sometimes simply doesn't work.
-	 * 
+	 *
 	 * @param {String} selector CSS selector to click on.
 	 */
 	async click(selector) {
@@ -430,7 +445,7 @@ class Scraper {
 
 	/**
 	 * Take a screenshot and log the error.
-	 * 
+	 *
 	 * @param {Response} res express response object
 	 * @param {Error} e exception to log
 	 */
@@ -438,7 +453,9 @@ class Scraper {
 		logger.error("Unexpected exception", e);
 		if (this.page)
 			await this.page.screenshot({path: "error.png", fullPage: true});
-	}	
+
+		await this.postToSite("error", {description: e.toString()});
+	}
 }
 
 let scraper = new Scraper();

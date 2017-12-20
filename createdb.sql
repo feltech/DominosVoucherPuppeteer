@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS working (
 	FOREIGN KEY (code) REFERENCES vouchers(code) ON DELETE CASCADE,
 	FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS error(description TEXT);
 	
 DELETE FROM vouchers_last_updated;
 INSERT INTO vouchers_last_updated VALUES(0);
+DELETE FROM error;
+INSERT INTO error VALUES("");
