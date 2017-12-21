@@ -50,6 +50,7 @@ $app->post('/vouchers', function (Request $request, Response $response) {
 		$db->table('vouchers')->insert($body);
 		$db->table('vouchers_last_updated')->update(['last_updated'=>time()]);
 	});
+	$this->db->table('bot_state')->update(['busy_with', null]);
 	return $response;
 });
 
@@ -71,9 +72,7 @@ $app->post('/branch', function (Request $request, Response $response) {
 	$this->logger->debug("Updating branch: ". json_encode($body));
 	$this->db->transaction(function ($db) use ($body) {
 		$timestamp = time();
-		$db->table('branches')->insertIgnore([
-			'id'=>$body['branch_id'], 'last_updated'=> 0
-		]);	
+		$db->table('branches')->insertIgnore(['id'=>$body['branch_id']]);	
 		$db->table('postcodes')->onDuplicateKeyUpdate([
 			'branch_id'=>$body['branch_id'], 'last_updated'=>$timestamp
 		])->insert([
@@ -81,6 +80,20 @@ $app->post('/branch', function (Request $request, Response $response) {
 			'last_updated'=>$timestamp
 		]);
 	});
+	$this->db->table('bot_state')->update(['busy_with', null]);
+	return $response->withStatus(204);
+});
+
+$app->post('/closed', function (Request $request, Response $response) {
+	// var_dump($request->getParsedBody());
+	$body = $request->getParsedBody();
+	$this->logger->debug("Setting branch closed: ". json_encode($body));
+	$db->table('branches')->where(
+		'id', $body['branch_id']
+	)->update([
+		'last_closed'=>$body['last_closed']
+	]);		
+	$this->db->table('bot_state')->update(['busy_with', null]);
 	return $response->withStatus(204);
 });
 
@@ -111,6 +124,7 @@ $app->get('/working/{postcode}', function (Request $request, Response $response,
 $app->post('/error', function (Request $request, Response $response, $args) {
 	$body = $request->getParsedBody();
 	$this->db->table('error')->update(['description'=>$body['description']]);
+	$this->db->table('bot_state')->update(['busy_with', null]);
 	return $response->withStatus(204);	
 });
 
@@ -133,20 +147,21 @@ $app->get('/uptodate/{postcode}', function (Request $request, Response $response
 		}
 	}
 
-	$branch_last_updated = $this->db->table('postcodes')->join(
+	$branch = $this->db->table('postcodes')->join(
 		'branches', 'branches.id', '=', 'postcodes.branch_id'
 	)->select([
-		'branches.last_updated'
-	])->where('postcodes.postcode', $postcode);
-
-	$branch_last_updated = $branch_last_updated->first();
+		'branches.last_updated', 'branches.last_closed'
+	])->where('postcodes.postcode', $postcode)->first();
 
 	$branch_uptodate = true;
-	if ($branch_last_updated === null) {
+	$branch_last_updated = null;
+	$branch_last_closed = null;
+	if ($branch === null) {
 		// Never checked for vouchers for this postcode before.
 		$branch_uptodate = false;
 	} else {
 		$branch_last_updated = (int)$branch_last_updated->last_updated;
+		$branch_last_closed = (int)$branch_last_updated->last_closed;
 		if (
 			time() - $branch_last_updated > 24*3600 || // branch out of date.
 			$vouchers_last_updated > $branch_last_updated  // vouchers updated more recently.
@@ -155,35 +170,42 @@ $app->get('/uptodate/{postcode}', function (Request $request, Response $response
 		}
 	}
 
-	$error = $this->db->table('error')->select('description')->first()->description === "";
+	$bot_table = $this->db->table('bot_state');
+	$bot_state = $bot_table->first();
 
-	$updating = "other";
-	if ($vouchers_uptodate == false) {
-		$this->logger->debug("Voucher list out of date, notifying bot");
-		$botresponse = Requests::get(getenv('bot_url') . "/vouchers");
-		if ($botresponse->success) {
-			$updating = "vouchers";
-		}
-	} else if ($branch_last_updated === null) {
-		$this->logger->debug("Branch for " . $postcode . " unknown, notifying bot");
-		$botresponse = Requests::get(getenv('bot_url') . "/branch/" . $postcode);
-		if ($botresponse->success) {
-			$updating = "branch";
-		}
-	} else if ($branch_uptodate == false) {
-		$this->logger->debug("Working vouchers forr " . $postcode . " out of date, notifying bot");
-		$botresponse = Requests::get(getenv('bot_url') . "/working/" . $postcode);
-		if ($botresponse->success) {
-			$updating = "working";
-		}
+	if ($bot_state->busy_with != null || $bot_state->error != null) {
+		$updating = "other";
 	} else {
-		$updating = "none";
+		if ($vouchers_uptodate == false) {
+			$this->logger->debug("Voucher list out of date, notifying bot");
+			$botresponse = Requests::get(getenv('bot_url') . "/vouchers");
+			if ($botresponse->success) {
+				$updating = "vouchers";
+				$bot_table->update(['busy_with', $updating]);
+			}
+		} else if ($branch_last_updated === null) {
+			$this->logger->debug("Branch for " . $postcode . " unknown, notifying bot");
+			$botresponse = Requests::get(getenv('bot_url') . "/branch/" . $postcode);
+			if ($botresponse->success) {
+				$updating = "branch";
+				$bot_table->update(['busy_with', $updating]);
+			}
+		} else if ($branch_uptodate == false) {
+			$this->logger->debug("Working vouchers forr " . $postcode . " out of date, notifying bot");
+			$botresponse = Requests::get(getenv('bot_url') . "/working/" . $postcode);
+			if ($botresponse->success) {
+				$updating = "working";
+				$bot_table->update(['busy_with', $updating]);
+			}
+		} else {
+			$updating = "none";
+		}
 	}
 
 	return $response->withJson([
 		'vouchersLastUpdated'=>$vouchers_last_updated, 'branchLastUpdated'=>$branch_last_updated, 
 		'vouchersUpToDate'=>$vouchers_uptodate, 'branchUpToDate'=>$branch_uptodate,
-		'updating'=>$updating, '$error'=>$error
+		'branchLastClosed'=>$branch_last_closed, 'updating'=>$updating, 'error'=>$bot_state->error
 	]);
 });
 
@@ -209,6 +231,7 @@ $app->post('/working', function (Request $request, Response $response) {
 
 		$db->table('working')->insert($vouchers);
 	});
+	$this->db->table('bot_state')->update(['busy_with', null]);
 	return $response->withStatus(204);
 });
 
