@@ -25,7 +25,7 @@ $container['db'] = function ($container_) {
 	);
 
 	$connection = new \Pixie\Connection('mysql', $config);
-	return new \Pixie\QueryBuilder\QueryBuilderHandler($connection);	
+	return new \Pixie\QueryBuilder\QueryBuilderHandler($connection);
 };
 
 // Logger
@@ -44,10 +44,10 @@ $container['view'] = new \Slim\Views\PhpRenderer("templates/");
  * Get complete current voucher list.
  */
 $app->get('/vouchers', function (Request $request, Response $response) {
-	$vouchers = $this->db->table('vouchers')->select('*')->get();	
+	$vouchers = $this->db->table('vouchers')->select('*')->get();
 	if ($vouchers === null) {
-		$vouchers = [];	
-	}	
+		$vouchers = [];
+	}
 	return $response->withJson($vouchers);
 });
 
@@ -76,7 +76,7 @@ $app->get('/working/{postcode}', function (Request $request, Response $response,
 	$vouchers_updated = $this->db->table(
 		'vouchers_last_updated'
 	)->select('*')->first()->last_updated;
-	
+
 	$rows = $this->db->table('postcodes')->join(
 		'branches', 'branches.id', '=', 'postcodes.branch_id'
 	)->join(
@@ -86,7 +86,7 @@ $app->get('/working/{postcode}', function (Request $request, Response $response,
 	)->select([
 		'vouchers.code'=>'code', 'vouchers.description'=>'description'
 	])->where('postcodes.postcode', $postcode)->get();
-	
+
 	if ($rows === null) {
 		$rows = [];
 	}
@@ -173,9 +173,9 @@ $app->get('/uptodate/{postcode}', function (Request $request, Response $response
 	}
 
 	return $response->withJson([
-		'vouchersLastUpdated'=>$vouchers_last_updated, 'branchLastUpdated'=>$branch_last_updated, 
+		'vouchersLastUpdated'=>$vouchers_last_updated, 'branchLastUpdated'=>$branch_last_updated,
 		'vouchersUpToDate'=>$vouchers_uptodate, 'branchUpToDate'=>$branch_uptodate,
-		'branchLastClosed'=>$branch_last_closed, 'updating'=>$updating, 
+		'branchLastClosed'=>$branch_last_closed, 'updating'=>$updating,
 		'error'=>$bot_state->error !== null
 	]);
 });
@@ -194,14 +194,14 @@ $app->get('/', function (Request $request, Response $response) {
 $app->group('/bot', function () use ($app) {
 
 	/**
-	 * Flag an error from the bot. 
+	 * Flag an error from the bot.
 	 */
 	$app->post('/error', function (Request $request, Response $response, $args) {
 		$body = $request->getParsedBody();
 		$this->db->table('bot_state')->update(['error'=>$body['error']]);
-		return $response;	
+		return $response;
 	});
-	
+
 	/**
 	 * Update voucher list.
 	 */
@@ -213,7 +213,6 @@ $app->group('/bot', function () use ($app) {
 			$db->table('vouchers')->insertIgnore($body);
 			$db->table('vouchers_last_updated')->update(['last_updated'=>time()]);
 		});
-		$this->db->table('bot_state')->update(['busy_with', null]);
 		return $response;
 	});
 
@@ -222,20 +221,19 @@ $app->group('/bot', function () use ($app) {
 	 * Update local Dominos branch for given postcode.
 	 */
 	$app->post('/branch', function (Request $request, Response $response) {
-		// var_dump($request->getParsedBody());
 		$body = $request->getParsedBody();
 		$this->logger->debug("Updating branch: ". json_encode($body));
 		$this->db->transaction(function ($db) use ($body) {
 			$timestamp = time();
-			$db->table('branches')->insertIgnore(['id'=>$body['branch_id']]);	
+			$db->table('branches')->insertIgnore(['id'=>$body['branch_id']]);
 			$db->table('postcodes')->onDuplicateKeyUpdate([
 				'branch_id'=>$body['branch_id'], 'last_updated'=>$timestamp
 			])->insert([
-				'postcode'=>$body['postcode'], 'branch_id'=>$body['branch_id'], 
+				'postcode'=>$body['postcode'], 'branch_id'=>$body['branch_id'],
 				'last_updated'=>$timestamp
 			]);
 		});
-		$this->db->table('bot_state')->update(['busy_with', null]);
+		$this->db->table('bot_state')->update(['busy_with'=>null]);
 		return $response;
 	});
 
@@ -249,7 +247,7 @@ $app->group('/bot', function () use ($app) {
 			'id', $body['branch_id']
 		)->update([
 			'last_closed'=>time()
-		]);		
+		]);
 		$this->db->table('bot_state')->update(['busy_with', null]);
 		return $response;
 	});
@@ -258,7 +256,7 @@ $app->group('/bot', function () use ($app) {
 	 * Reset bot's busy state, called when bot wakes up.
 	 */
 	$app->post('/awake', function (Request $request, Response $response, $args) {
-		return $response;	
+		return $response;
 	});
 
 	/**
@@ -266,13 +264,14 @@ $app->group('/bot', function () use ($app) {
 	 */
 	$app->post('/working', function (Request $request, Response $response) {
 		$body = $request->getParsedBody();
+// 		$this->logger->debug("Updating working vouchers: ". json_encode($body));
 		$branchID = $body['branch_id'];
 
 		$this->logger->debug(
-			"Updating working voucher list for " . $branchID . " with ". 
+			"Updating working voucher list for " . $branchID . " with ".
 			count($body['vouchers']) . " vouchers"
 		);
-		
+
 		$vouchers = array_map(function ($voucher) use ($branchID) {
 			return ['code'=>$voucher['code'], 'branch_id'=>$branchID];
 		}, $body['vouchers']);
@@ -305,7 +304,7 @@ $app->group('/bot', function () use ($app) {
 	 * Middleware: validate bot's JWT.
 	 */
 	new \Slim\Middleware\JwtAuthentication([
-		"secret" => getenv("bot_secret"), 
+		"secret" => getenv("bot_secret"),
 		"error" => function ($request, $response, $arguments) {
 			$data["message"] = $arguments["message"];
 			return $response->withJson($arguments);
