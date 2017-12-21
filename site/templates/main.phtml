@@ -41,6 +41,7 @@
 		<div class="form-group">
 			<input 
 				type="text" class="form-control" id="inputPostcode" placeholder="Enter postcode..."
+				required pattern="^(?:[A-Za-z]\d ?\d[A-Za-z]{2})|(?:[A-Za-z][A-Za-z\d]\d ?\d[A-Za-z]{2})|(?:[A-Za-z]{2}\d{2} ?\d[A-Za-z]{2})|(?:[A-Za-z]\d[A-Za-z] ?\d[A-Za-z]{2})|(?:[A-Za-z]{2}\d[A-Za-z] ?\d[A-Za-z]{2})"
 			/>
 		</div>	
 		<button id="voucher-search-submit" type="submit" class="btn btn-default">Search</button>
@@ -85,7 +86,7 @@
 			if (vouchers.length)
 				$('#voucher-list').append($(tmpl({vouchers: vouchers})));
 			else 
-				$('#voucher-list').append($('<dt>Sorry, no vouchers found</dt>'));
+				$('#voucher-list').append($('<dt>no vouchers found, yet</dt>'));
 		}
 
 		function check(postcode) {
@@ -110,12 +111,15 @@
 						"The dominos bot is poorly, the boss has been notified." + 
 						" Please try again later."
 					);
+					return;
 				} else if (status.updating === "vouchers") {
 					$botStatus.html("Updating the main voucher list...");
 				} else if (status.updating === "branch") {
 					$botStatus.html("Locating your local branch...");
 				} else if (status.updating === "working") {
 					$botStatus.html("Checking for working vouchers...");
+				} else if ($botStatus.html() === "") {
+					$botStatus.html("Waiting for bot to be free...");
 				}
 				
 				if (!status.vouchersUpToDate || !status.branchUpToDate) {
@@ -136,7 +140,8 @@
 		}
 
 		$('#voucher-search').on('submit', function () {
-			var postcode = document.getElementById('inputPostcode').value.toUpperCase();
+			var postcode = 
+				document.getElementById('inputPostcode').value.toUpperCase().replace(/ /g, "");
 			$('#voucher-search-submit').attr('disabled', true);
 			$('#voucher-list').empty();
 			$('.postcode-search').html(postcode)

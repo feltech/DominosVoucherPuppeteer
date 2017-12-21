@@ -4,7 +4,7 @@ const express = require('express');
 const _ = require('lodash');
 const request = require('request-promise-native');
 
-const VOUCHER_PAGES = 2;
+const VOUCHER_PAGES = 3;
 const INCLUDE_TAKE10S = false;
 
 let logger = require('logger').createLogger();

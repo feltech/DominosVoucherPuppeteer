@@ -56,7 +56,7 @@ $app->post('/vouchers', function (Request $request, Response $response) {
 
 $app->get('/branch/{postcode}', function (Request $request, Response $response, $args) {
 	// Check if vouchers haven't been updated in a day
-	$postcode = strtoupper($args['postcode']);
+	$postcode = cleanPostcode($args['postcode']);
 	$row = $this->db->table('postcodes')->find($postcode, 'postcode');
 	if ($row) {
 		$response = $response->withJson($row);
@@ -99,7 +99,7 @@ $app->post('/closed', function (Request $request, Response $response) {
 
 $app->get('/working/{postcode}', function (Request $request, Response $response, $args) {
 	// Check if vouchers haven't been updated in a day
-	$postcode = strtoupper($args['postcode']);
+	$postcode = cleanPostcode($args['postcode']);
 
 	$vouchers_updated = $this->db->table(
 		'vouchers_last_updated'
@@ -130,7 +130,7 @@ $app->post('/error', function (Request $request, Response $response, $args) {
 
 $app->get('/uptodate/{postcode}', function (Request $request, Response $response, $args) {
 	// Check if vouchers haven't been updated in a day
-	$postcode = strtoupper($args['postcode']);
+	$postcode = cleanPostcode($args['postcode']);
 	$timestamp = time();
 
 	$vouchers_last_updated = $this->db->table(
@@ -244,5 +244,9 @@ $app->get('/', function (Request $request, Response $response) {
 	$response = $this->view->render($response, "main.phtml");
     return $response;
 });
+
+function cleanPostcode($postcode) {
+	return preg_replace("/\s/", "", strtoupper($postcode));
+}
 
 $app->run();
