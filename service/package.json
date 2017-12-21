@@ -9,6 +9,7 @@
 		"express": "*",
 		"logger": "*",
 		"request": "*",
-		"request-promise-native": "*"
+		"request-promise-native": "*",
+		"njwt": "*"
 	}
 }

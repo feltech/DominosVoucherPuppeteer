@@ -91,9 +91,13 @@
 
 		function check(postcode) {
 			$.getJSON("/uptodate/" + postcode).then(function (status) {
-				$('#vouchers-last-updated').html(
-					moment(status.vouchersLastUpdated * 1000).fromNow()
-				);
+				if (status.vouchersLastUpdated) {
+					$('#vouchers-last-updated').html(
+						moment(status.vouchersLastUpdated * 1000).fromNow()
+					);
+				} else {
+					$('#vouchers-last-updated').html("never");
+				}
 				if (status.branchLastUpdated) {
 					$('#branch-last-updated').html(
 						moment(status.branchLastUpdated * 1000).fromNow()

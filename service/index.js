@@ -3,6 +3,7 @@ const moment = require('moment');
 const express = require('express');
 const _ = require('lodash');
 const request = require('request-promise-native');
+const nJwt = require('njwt');
 
 const VOUCHER_PAGES = 3;
 const INCLUDE_TAKE10S = false;
@@ -20,7 +21,8 @@ class StoreClosedError extends Error {}
 class Scraper {
 	constructor() {
 		this.sitePostOpts = {
-			method: 'POST', resolveWithFullResponse: true, strictSSL: false, json: true
+			method: 'POST', resolveWithFullResponse: true, strictSSL: false, json: true,
+			auth: {bearer: nJwt.create({}, process.env.bot_secret)}
 		};
 		this.siteGetOpts = {strictSSL: false, json: true};
 		this.inProgress = false;
@@ -67,9 +69,9 @@ class Scraper {
 			});
 		});
 
-		let site_url = "https://" + process.env.site_host + "/vouchers";
-		logger.info("First run: getting vouchers from site at " + site_url);
-		request(site_url, this.siteGetOpts).then(
+		let siteVoucherUrl = "https://" + process.env.site_host + "/vouchers";
+		logger.info("First run: getting vouchers from site at " + siteVoucherUrl);
+		request(siteVoucherUrl, this.siteGetOpts).then(
 			(vouchers)=>{
 				this.vouchers = vouchers;
 				this.inProgress = false;
@@ -80,7 +82,7 @@ class Scraper {
 		);
 
 		logger.debug("Clearing any previous error state");
-		this.postToSite("error", {description: ""});
+		this.postToSite("awake");
 	}
 
 	/**
@@ -312,11 +314,12 @@ class Scraper {
 				"Working vouchers:" + vouchers.map((v)=>"\n[" + v.code + "] " + v.description)
 			);
 		} catch (e) {
-			// TODO: handle store closed state
-			if (e instanceof StoreClosedError) 
-				throw e;
-			this.logError(e);
 			this.inProgress = false;
+			if (e instanceof StoreClosedError) {
+				await this.postToSite("closed", {branch_id});
+				return;
+			}				
+			this.logError(e);
 		} finally {
 			this.page = null;
 		}
@@ -367,11 +370,10 @@ class Scraper {
 	 */
 	async postToSite(endpoint, data) {
 		try {
-			logger.debug("Updating " + endpoint + " on main site: " + process.env.site_host);
-			let response = await request(
-				"https://" + process.env.site_host + "/" + endpoint,
-				Object.assign({ body: data }, this.sitePostOpts)
-			);
+			let url = "https://" + process.env.site_host + "/bot/" + endpoint,
+				response;
+			logger.debug("Posting to main site: " + url);
+			response = await request(url, Object.assign({ body: data }, this.sitePostOpts));
 			logger.info(
 				"Updated " + endpoint + " on main site " + process.env.site_host + " with status " +
 				response.statusCode
@@ -454,7 +456,7 @@ class Scraper {
 		if (this.page)
 			await this.page.screenshot({path: "error.png", fullPage: true});
 
-		await this.postToSite("error", {description: e.toString()});
+		await this.postToSite("error", {error: e.toString()});
 	}
 }
 

@@ -4,6 +4,7 @@
         "usmanhalalit/pixie": "2.*@dev",
         "slim/php-view": "^2.2",
         "rmccue/requests": "^1.7",
-        "monolog/monolog": "^1.23"
+        "monolog/monolog": "^1.23",
+        "tuupola/slim-jwt-auth": "^2.3"
     }
 }
