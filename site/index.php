@@ -243,12 +243,11 @@ $app->group('/bot', function () use ($app) {
 	$app->post('/closed', function (Request $request, Response $response) {
 		$body = $request->getParsedBody();
 		$this->logger->debug("Setting branch closed: ". json_encode($body));
-		$db->table('branches')->where(
+		$this->db->table('branches')->where(
 			'id', $body['branch_id']
 		)->update([
 			'last_closed'=>time()
 		]);
-		$this->db->table('bot_state')->update(['busy_with', null]);
 		return $response;
 	});
 
@@ -256,6 +255,7 @@ $app->group('/bot', function () use ($app) {
 	 * Reset bot's busy state, called when bot wakes up.
 	 */
 	$app->post('/awake', function (Request $request, Response $response, $args) {
+		$this->db->table('bot_state')->update(['error'=>null]);
 		return $response;
 	});
 
