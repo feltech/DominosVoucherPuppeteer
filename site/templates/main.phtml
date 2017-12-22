@@ -5,6 +5,7 @@
 	<meta http-equiv="X-UA-Compatible" content="IE=edge" />
 	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<link rel='shortcut icon' type='image/x-icon' href='/img/favicon.ico' />
 	<link
 		rel='stylesheet'
 		href='https://maxcdn.bootstrapcdn.com/bootswatch/3.3.7/paper/bootstrap.min.css' />	
@@ -18,36 +19,47 @@
 	<script
 		src='https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.19.3/moment-with-locales.min.js'
 	></script>	
-	<title>Dominos UK Voucher Puppeteer</title>
+	<title>Dominos (UK) Voucher Puppet</title>
+	<style>
+	div.jumbotron {
+		box-shadow: 0px 1px 3px 1px #aaa;
+		background-color: #fcfcfc;
+	}
+	div.jumbotron > div.container > h1 > img {
+		height: 100px;
+	}
+	div.jumbotron > div.container > h1 > span {
+		vertical-align: middle;
+	}
+	div.jumbotron > div.container > p {
+		margin-left: 120px;
+	}	
+	</style>
 </head>
 <body>
-<nav class="navbar navbar-default">
-	<div class="container-fluid">
-		<div class="navbar-header">
-			<a class="navbar-brand" href="#">
-				Dominos (UK) Voucher Puppeteer 
-			</a>
-		</div>
-	</div>
-</nav>
 <div class="jumbotron">
 	<div class="container">
-		<h1>Dominos UK Voucher Puppeteer</h1> 
-		<p>working voucher codes for Dominos Pizza UK, searchable by postcode</p>
+		<h1><img src="img/dominos_logo.png" /> <span>Dominos (UK) Voucher Puppet</span></h1> 
+		<p>scan for working voucher codes by postcode</p>
 	</div>
 </div>
 <div class="container">
-	<form id="voucher-search">
-		<div class="form-group">
-			<input 
-				type="text" class="form-control" id="inputPostcode" placeholder="Enter postcode..."
-				required pattern="^(?:[A-Za-z]\d ?\d[A-Za-z]{2})|(?:[A-Za-z][A-Za-z\d]\d ?\d[A-Za-z]{2})|(?:[A-Za-z]{2}\d{2} ?\d[A-Za-z]{2})|(?:[A-Za-z]\d[A-Za-z] ?\d[A-Za-z]{2})|(?:[A-Za-z]{2}\d[A-Za-z] ?\d[A-Za-z]{2})"
-			/>
-		</div>	
-		<button id="voucher-search-submit" type="submit" class="btn btn-default">Search</button>
-	</form>
+	<div class="row">
+		<div class="col-md-12">
+			<form id="voucher-search">
+				<div class="form-group">
+					<input 
+						type="text" class="form-control" id="inputPostcode" placeholder="Enter postcode..."
+						required pattern="^(?:[A-Za-z]\d ?\d[A-Za-z]{2})|(?:[A-Za-z][A-Za-z\d]\d ?\d[A-Za-z]{2})|(?:[A-Za-z]{2}\d{2} ?\d[A-Za-z]{2})|(?:[A-Za-z]\d[A-Za-z] ?\d[A-Za-z]{2})|(?:[A-Za-z]{2}\d[A-Za-z] ?\d[A-Za-z]{2})"
+					/>
+				</div>	
+				<button id="voucher-search-submit" type="submit" class="btn btn-default">Search</button>
+			</form>
+		</div>
+	</div>
 </div>
 <div id="search-results" class="container" style="visibility: hidden">
+	<hr />
 	<div class="row">
 		<div class="col-md-4">
 			<dl id="last-updated">
