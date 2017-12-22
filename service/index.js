@@ -21,8 +21,7 @@ class StoreClosedError extends Error {}
 class Scraper {
 	constructor() {
 		this.sitePostOpts = {
-			method: 'POST', resolveWithFullResponse: true, strictSSL: false, json: true,
-			auth: {bearer: nJwt.create({}, process.env.bot_secret)}
+			method: 'POST', resolveWithFullResponse: true, strictSSL: false, json: true
 		};
 		this.siteGetOpts = {strictSSL: false, json: true};
 		this.inProgress = false;
@@ -266,7 +265,7 @@ class Scraper {
 				logger.debug("Waiting until code applied");
 				await this.page.waitForSelector("footer > button[disabled]", {hidden: true});
 				logger.debug("Checking for voucher choice modal");
-				
+
 				try {
 					await this.page.waitForSelector(
 						'div.voucher-choice', {timeout: 10, visible: true}
@@ -318,7 +317,7 @@ class Scraper {
 			if (e instanceof StoreClosedError) {
 				await this.postToSite("closed", {branch_id});
 				return;
-			}				
+			}
 			this.logError(e);
 		} finally {
 			this.page = null;
@@ -343,7 +342,7 @@ class Scraper {
 		await this.page.click("#btn-delivery");
 		try {
 			logger.debug("Waiting for menu button");
-			await this.page.waitForSelector("#menu-selector", {timeout: 5000});
+			await this.page.waitForSelector("#menu-selector");
 			logger.debug("Getting store ID from javascript")
 			await this.page.waitFor(
 				()=>window.initalStoreContext &&
@@ -373,7 +372,9 @@ class Scraper {
 			let url = "https://" + process.env.site_host + "/bot/" + endpoint,
 				response;
 			logger.debug("Posting to main site: " + url);
-			response = await request(url, Object.assign({ body: data }, this.sitePostOpts));
+			response = await request(url, Object.assign({ 
+				body: data, auth: {bearer: nJwt.create({}, process.env.bot_secret)}
+			}, this.sitePostOpts))
 			logger.info(
 				"Updated " + endpoint + " on main site " + process.env.site_host + " with status " +
 				response.statusCode
