@@ -39,33 +39,6 @@ $container['logger'] = function($c) {
 // Template renderer.
 $container['view'] = new \Slim\Views\PhpRenderer("templates/");
 
-
-/**
- * Get complete current voucher list.
- */
-$app->get('/vouchers', function (Request $request, Response $response) {
-	$vouchers = $this->db->table('vouchers')->select('*')->get();
-	if ($vouchers === null) {
-		$vouchers = [];
-	}
-	return $response->withJson($vouchers);
-});
-
-/**
- * Get local Dominos branch for given postcode.
- */
-$app->get('/branch/{postcode}', function (Request $request, Response $response, $args) {
-	// Check if vouchers haven't been updated in a day
-	$postcode = cleanPostcode($args['postcode']);
-	$row = $this->db->table('postcodes')->find($postcode, 'postcode');
-	if ($row) {
-		$response = $response->withJson($row);
-	} else {
-		$response = $response->withStatus(404);
-	}
-	return $response;
-});
-
 /**
  * Get currently known working vouchers for postcode.
  */
@@ -180,23 +153,24 @@ $app->get('/uptodate/{postcode}', function (Request $request, Response $response
 	]);
 });
 
-$app->get('/ping', function (Request $request, Response $response) {
-	$response->write("pong");
+/**
+ * Render main index page.
+ */
+$app->get('/', function (Request $request, Response $response) {
+	$response = $this->view->render($response, "main.phtml");
 	return $response;
 });
 
-$app->get('/', function (Request $request, Response $response) {
-	$response = $this->view->render($response, "main.phtml");
-    return $response;
-});
 
-
+/**
+ * Group bot-only endpoints.
+ */
 $app->group('/bot', function () use ($app) {
 
 	/**
 	 * Flag an error from the bot.
 	 */
-	$app->post('/error', function (Request $request, Response $response, $args) {
+	$app->post('/error', function (Request $request, Response $response) {
 		$body = $request->getParsedBody();
 		$this->db->table('bot_state')->update(['error'=>$body['error']]);
 		return $response;
@@ -306,8 +280,7 @@ $app->group('/bot', function () use ($app) {
 	new \Slim\Middleware\JwtAuthentication([
 		"secret" => getenv("bot_secret"),
 		"error" => function ($request, $response, $arguments) {
-			$data["message"] = $arguments["message"];
-			return $response->withJson($arguments);
+			return $response->withJson(['message'=>$arguments["message"]]);
 		}
 	])
 );
