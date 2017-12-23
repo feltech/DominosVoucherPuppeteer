@@ -40,11 +40,57 @@ $container['logger'] = function($c) {
 $container['view'] = new \Slim\Views\PhpRenderer("templates/");
 
 /**
+ * Middleware: postcode cleaning and validating.
+ */ 
+$cleanPostcode = function (Request $request, Response $response, $next) {
+	$routeParams = $request->getAttribute('routeInfo')[2];
+	// error_log(json_encode($request->getAttributes(), JSON_UNESCAPED_SLASHES));
+	if (!$routeParams['postcode'] ?? null)
+		return $response->withStatus(400)->write("No postcode");
+
+	$postcode = $routeParams['postcode'];
+	$postcode = preg_replace("/\s/", "", strtoupper($postcode));
+	// Modified from https://stackoverflow.com/questions/164979/uk-postcode-regex-comprehensive
+	$regex = '/^([G][I][R]0[A]{2})|((([A-Z][0-9]{1,2})|(([A-Z][A-H-J-Y-][0-9]{1,2})|(([A-Z]0-9][A-Z])|([A-Z-][A-H-J-Y-][0-9]?[A-Z]))))[0-9][A-Z]{2})$/';
+	if (!preg_match($regex, $postcode))
+		return $response->withStatus(400)->write("Bad postcode: " . $postcode);
+
+	$routeParams['postcode'] = $postcode;
+	return $next($request, $response);
+};
+
+/**
+ * Query the bot at given endpoint with optional postcode
+ */
+$queryBot = function ($endpoint, $postcode=null) use (&$app) {
+	$container = $app->getContainer();
+	$url = getenv('bot_url') . "/" . $endpoint;
+	if ($postcode) {
+		$url = $url . "/" . $postcode;
+	}
+	$botresponse = null;
+	try {
+		$botresponse = Requests::get($url, [], ['timeout'=>60]);
+	} catch (Requests_Exception $e) {
+		$container->logger->error("Connection error requesting bot: " . $e->getMessage());
+		throw $e;
+	}
+	if ($botresponse->success) {
+		$container->db->table('bot_state')->update(['busy_with'=>$endpoint]);
+	} else {
+		$container->logger->error(
+			"Bot rejected request (" . $botresponse->status . "): " . $botresponse->body
+		);
+		throw new Requests_Exception("Bot rejected request", "bot", null, 503);
+	}
+};
+
+/**
  * Get currently known working vouchers for postcode.
  */
 $app->get('/working/{postcode}', function (Request $request, Response $response, $args) {
-	// Check if vouchers haven't been updated in a day
-	$postcode = cleanPostcode($args['postcode']);
+	// $this->logger->debug(json_encode(debug_backtrace(), JSON_UNESCAPED_SLASHES));
+	$postcode = $args['postcode'];
 
 	$vouchers_updated = $this->db->table(
 		'vouchers_last_updated'
@@ -64,94 +110,95 @@ $app->get('/working/{postcode}', function (Request $request, Response $response,
 		$rows = [];
 	}
 	return $response->withJson($rows);
-});
+})->add($cleanPostcode);
 
 /**
  * Check for current state of postcode and bot, and fire off bot if updates are required.
  */
-$app->get('/uptodate/{postcode}', function (Request $request, Response $response, $args) {
-	// Check if vouchers haven't been updated in a day
-	$postcode = cleanPostcode($args['postcode']);
-	$timestamp = time();
+$app->get(
+	'/uptodate/{postcode}', 
+	function (Request $request, Response $response, $args) use ($queryBot) {
+		$postcode = $args['postcode'];
+		$timestamp = time();
 
-	$vouchers_last_updated = $this->db->table(
-		'vouchers_last_updated'
-	)->select('*')->first();
+		$vouchers_last_updated = $this->db->table(
+			'vouchers_last_updated'
+		)->select('*')->first();
 
-	$vouchers_uptodate = true;
-	if ($vouchers_last_updated === null) {
-		$vouchers_uptodate = false;
-	} else {
-		$vouchers_last_updated = (int)$vouchers_last_updated->last_updated;
-		if (time() - $vouchers_last_updated > 24*3600) {
+		$vouchers_uptodate = true;
+		if ($vouchers_last_updated === null) {
 			$vouchers_uptodate = false;
+		} else {
+			$vouchers_last_updated = (int)$vouchers_last_updated->last_updated;
+			if (time() - $vouchers_last_updated > 24*3600) {
+				$vouchers_uptodate = false;
+			}
 		}
-	}
 
-	$branch = $this->db->table('postcodes')->join(
-		'branches', 'branches.id', '=', 'postcodes.branch_id'
-	)->select([
-		'branches.last_updated', 'branches.last_closed'
-	])->where('postcodes.postcode', $postcode)->first();
+		$branch = $this->db->table('postcodes')->join(
+			'branches', 'branches.id', '=', 'postcodes.branch_id'
+		)->select([
+			'branches.id', 'branches.last_updated', 'branches.last_closed'
+		])->where('postcodes.postcode', $postcode)->first();
 
-	$branch_uptodate = true;
-	$branch_last_updated = null;
-	$branch_last_closed = null;
-	if ($branch === null) {
-		// Never checked for vouchers for this postcode before.
-		$branch_uptodate = false;
-	} else {
-		$branch_last_updated = (int)$branch->last_updated;
-		$branch_last_closed = (int)$branch->last_closed;
-		if (
-			time() - $branch_last_updated > 24*3600 || // branch out of date.
-			$vouchers_last_updated > $branch_last_updated  // vouchers updated more recently.
-		) {
+		$branch_uptodate = true;
+		$branch_exists = null;
+		$branch_last_updated = null;
+		$branch_last_closed = null;
+		if ($branch === null) {
+			// Never checked for vouchers for this postcode before.
 			$branch_uptodate = false;
-		}
-	}
-
-	$bot_table = $this->db->table('bot_state');
-	$bot_state = $bot_table->first();
-
-	$updating = "none";
-
-	if ($bot_state->busy_with !== null || $bot_state->error !== null) {
-		$updating = "other";
-	} else {
-		if ($vouchers_uptodate === false) {
-			$this->logger->debug("Voucher list out of date, notifying bot");
-			$botresponse = Requests::get(getenv('bot_url') . "/vouchers");
-			if ($botresponse->success) {
-				$updating = "vouchers";
-				$bot_table->update(['busy_with'=>$updating]);
-			}
-		} else if ($branch_last_updated === null) {
-			$this->logger->debug("Branch for " . $postcode . " unknown, notifying bot");
-			$botresponse = Requests::get(getenv('bot_url') . "/branch/" . $postcode);
-			if ($botresponse->success) {
-				$updating = "branch";
-				$bot_table->update(['busy_with'=>$updating]);
-			}
-		} else if ($branch_uptodate == false) {
-			$this->logger->debug(
-				"Working vouchers for " . $postcode . " out of date, notifying bot"
-			);
-			$botresponse = Requests::get(getenv('bot_url') . "/working/" . $postcode);
-			if ($botresponse->success) {
-				$updating = "working";
-				$bot_table->update(['busy_with'=>$updating]);
+		} else {
+			$branch_last_updated = (int)$branch->last_updated;
+			$branch_last_closed = (int)$branch->last_closed;
+			$branch_exists = (int)$branch->id !== -1;
+			if (
+				time() - $branch_last_updated > 24*3600 || // branch out of date.
+				$vouchers_last_updated > $branch_last_updated  // vouchers updated more recently.
+			) {
+				$branch_uptodate = false;
 			}
 		}
-	}
 
-	return $response->withJson([
-		'vouchersLastUpdated'=>$vouchers_last_updated, 'branchLastUpdated'=>$branch_last_updated,
-		'vouchersUpToDate'=>$vouchers_uptodate, 'branchUpToDate'=>$branch_uptodate,
-		'branchLastClosed'=>$branch_last_closed, 'updating'=>$updating,
-		'error'=>$bot_state->error !== null
-	]);
-});
+		$bot_state = $this->db->table('bot_state')->first();
+		$error = $bot_state->error !== null;
+
+		$updating = "none";
+
+		if ($branch_exists !== false) {
+			if ($bot_state->busy_with !== null || $bot_state->error !== null) {
+				$updating = "other";
+			} else {
+				try {
+					if ($vouchers_uptodate === false) {
+						$this->logger->debug("Voucher list out of date, notifying bot");
+						$updating = 'vouchers';
+						$queryBot($updating);
+					} else if ($branch_last_updated === null) {
+						$this->logger->debug("Branch for " . $postcode . " unknown, notifying bot");
+						$updating = 'branch';
+						$queryBot($updating, $postcode);
+					} else if ($branch_uptodate == false) {
+						$this->logger->debug(
+							"Working vouchers for " . $postcode . " out of date, notifying bot"
+						);
+						$updating = 'working';
+						$queryBot($updating, $postcode);
+					}
+				} catch (Requests_Exception $e) {
+					$error = true;
+				}
+			} // End if bot is not busy.
+		} // End if branch exists.
+
+		return $response->withJson([
+			'vouchersLastUpdated'=>$vouchers_last_updated, 'branchLastUpdated'=>$branch_last_updated,
+			'vouchersUpToDate'=>$vouchers_uptodate, 'branchUpToDate'=>$branch_uptodate,
+			'branchLastClosed'=>$branch_last_closed, 'updating'=>$updating,
+			'error'=>$error, 'branchExists'=>$branch_exists
+		]);
+	}
+)->add($cleanPostcode);
 
 /**
  * Render main index page.
@@ -161,11 +208,10 @@ $app->get('/', function (Request $request, Response $response) {
 	return $response;
 });
 
-
 /**
  * Group bot-only endpoints.
  */
-$app->group('/bot', function () use ($app) {
+$app->group('/bot', function () use (&$app) {
 
 	/**
 	 * Flag an error from the bot.
@@ -226,14 +272,6 @@ $app->group('/bot', function () use ($app) {
 	});
 
 	/**
-	 * Reset bot's busy state, called when bot wakes up.
-	 */
-	$app->post('/awake', function (Request $request, Response $response, $args) {
-		$this->db->table('bot_state')->update(['error'=>null]);
-		return $response;
-	});
-
-	/**
 	 * Update list of working vouchers for given branch.
 	 */
 	$app->post('/working', function (Request $request, Response $response) {
@@ -261,6 +299,21 @@ $app->group('/bot', function () use ($app) {
 		return $response;
 	});
 
+	/**
+	 * Get complete current voucher list.
+	 * 
+	 * This is only run on instantation of the bot, so also reset error state.
+	 */
+	$app->get('/vouchers', function (Request $request, Response $response) {
+		$vouchers = $this->db->table('vouchers')->select('*')->get();
+		if ($vouchers === null) {
+			$vouchers = [];
+		}		
+		$this->db->table('bot_state')->update(['error'=>null]);
+		return $response->withJson($vouchers);
+	});
+	
+
 })->add(
 	/**
 	 * Middleware: reset bot's busy status.
@@ -271,6 +324,8 @@ $app->group('/bot', function () use ($app) {
 		} finally {
 			$this->db->table('bot_state')->update(['busy_with'=>null]);
 		}
+		if ($response->getBody()->getSize())
+			return $response;
 		return $response->withStatus(204);
 	}
 )->add(
@@ -284,10 +339,5 @@ $app->group('/bot', function () use ($app) {
 		}
 	])
 );
-
-
-function cleanPostcode($postcode) {
-	return preg_replace("/\s/", "", strtoupper($postcode));
-}
 
 $app->run();
