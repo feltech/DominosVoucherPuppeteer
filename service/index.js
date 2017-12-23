@@ -15,7 +15,9 @@ logger.format = (level, date, message)=> {
 logger.setLevel("debug");
 
 
-class StoreClosedError extends Error {}
+class BranchClosedError extends Error {}
+
+class NoBranchError extends Error {}
 
 
 class Scraper {
@@ -68,9 +70,14 @@ class Scraper {
 			});
 		});
 
-		let siteVoucherUrl = "https://" + process.env.site_host + "/vouchers";
+		let siteVoucherUrl = "https://" + process.env.site_host + "/bot/vouchers";
 		logger.info("First run: getting vouchers from site at " + siteVoucherUrl);
-		request(siteVoucherUrl, this.siteGetOpts).then(
+		request(
+			siteVoucherUrl, 
+			Object.assign(
+				{auth: {bearer: nJwt.create({}, process.env.bot_secret)}}, this.siteGetOpts
+			)
+		).then(
 			(vouchers)=>{
 				this.vouchers = vouchers;
 				this.inProgress = false;
@@ -81,7 +88,6 @@ class Scraper {
 		);
 
 		logger.debug("Clearing any previous error state");
-		this.postToSite("awake");
 	}
 
 	/**
@@ -196,8 +202,12 @@ class Scraper {
 		try {
 			branch_id = await this.loadBranch(postcode);
 		} catch (e) {
-			this.logError(e);
 			this.inProgress = false;
+			if (e instanceof NoBranchError) {
+				await this.postToSite("branch", {branch_id: -1, postcode: postcode});
+				return;
+			}
+			this.logError(e);
 			return;
 		} finally {
 			this.page = null;
@@ -217,17 +227,19 @@ class Scraper {
 		await this.initBrowser();
 		try {
 			branch_id = await this.loadBranch(postcode);
-
-			if (await this.page.$(".store-finder-alert", {visible: true, timeout: 1000}))
-				throw new StoreClosedError();
-
-			if (await this.page.$("[data-store-id]")) {
+			logger.debug("Waiting for menu button / store list");
+			await this.page.waitForSelector(
+				"#menu-selector,[data-store-id],.store-finder-alert", {visible: true}
+			);
+			if (await this.page.$(".store-finder-alert")) {
+				logger.warn("Branch is closed");
+				throw new BranchClosedError();
+			} else if (await this.page.$("[data-store-id]")) {
 				logger.debug("Clicking to select first branch in list");
 				await this.page.click("article.store-details button.btn-primary");
+				logger.debug("Waiting for menu button");
+				await this.page.waitForSelector("#menu-selector", {visible: true});				
 			}
-
-			logger.debug("Waiting for menu button");
-			await this.page.waitForSelector("#menu-selector");
 			logger.debug("Clicking menu button");
 			await this.page.click("#menu-selector");
 			logger.debug("Waiting for menu to show");
@@ -314,7 +326,7 @@ class Scraper {
 			);
 		} catch (e) {
 			this.inProgress = false;
-			if (e instanceof StoreClosedError) {
+			if (e instanceof BranchClosedError) {
 				await this.postToSite("closed", {branch_id});
 				return;
 			}
@@ -340,9 +352,17 @@ class Scraper {
 		await this.page.type("#store-finder-search input[type='text']", postcode);
 		logger.debug("Click to find branch");
 		await this.page.click("#btn-delivery");
-		try {
-			logger.debug("Waiting for menu button");
-			await this.page.waitForSelector("#menu-selector");
+		logger.debug("Waiting for menu button (or error)");
+		await this.page.waitForSelector(
+			"#menu-selector,[data-store-id],.modal-title", {visible: true}
+		);
+		if (await this.page.$("[data-store-id]")) {
+			logger.debug("Branch closed. Getting store ID from button");
+			return await this.page.evaluate(()=>$("[data-store-id]").first().data().storeId);
+		} else if (await this.page.$(".modal-title")) {
+			logger.warn("No branch found");
+			throw new NoBranchError();
+		} else {
 			logger.debug("Getting store ID from javascript")
 			await this.page.waitFor(
 				()=>window.initalStoreContext &&
@@ -350,15 +370,8 @@ class Scraper {
 			);
 			return await this.page.evaluate(
 				()=>window.initalStoreContext.sessionContext.storeId
-			);
-		} catch (e) {
-			logger.debug("Branch closed, hopefully");
-			if (await this.page.$("[data-store-id]")) {
-				logger.debug("Getting store ID from button");
-				return await this.page.evaluate(()=>$("[data-store-id]").first().data().storeId);
-			}
-			throw e;
-		}
+			);			
+		}	
 	}
 
 	/**
