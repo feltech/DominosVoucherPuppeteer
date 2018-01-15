@@ -30,7 +30,7 @@ $container['db'] = function ($container_) {
 
 // Logger
 $container['logger'] = function($c) {
-    $logger = new \Monolog\Logger('my_logger');
+    $logger = new \Monolog\Logger('index');
     $handler = new \Monolog\Handler\ErrorLogHandler();
     $logger->pushHandler($handler);
     return $logger;
@@ -51,7 +51,7 @@ $cleanPostcode = function (Request $request, Response $response, $next) {
 	$postcode = $routeParams['postcode'];
 	$postcode = preg_replace("/\s/", "", strtoupper($postcode));
 	// Modified from https://stackoverflow.com/questions/164979/uk-postcode-regex-comprehensive
-	$regex = '/^([G][I][R]0[A]{2})|((([A-Z][0-9]{1,2})|(([A-Z][A-H-J-Y-][0-9]{1,2})|(([A-Z]0-9][A-Z])|([A-Z-][A-H-J-Y-][0-9]?[A-Z]))))[0-9][A-Z]{2})$/';
+	$regex = '/^([G][I][R]0[A]{2})|((([A-Z][0-9]{1,2})|(([A-Z][A-H-J-Y-][0-9]{1,2})|(([A-Z][0-9][A-Z])|([A-Z-][A-H-J-Y-][0-9]?[A-Z]))))[0-9][A-Z]{2})$/';
 	if (!preg_match($regex, $postcode))
 		return $response->withStatus(400)->write("Bad postcode: " . $postcode);
 
@@ -72,7 +72,9 @@ $queryBot = function ($endpoint, $postcode=null) use (&$app) {
 	try {
 		$botresponse = Requests::get($url, [], ['timeout'=>60]);
 	} catch (Requests_Exception $e) {
-		$container->logger->error("Connection error requesting bot: " . $e->getMessage());
+		$container->logger->error(
+			"Connection error requesting bot at '" . $url . "': " . $e->getMessage()
+		);
 		throw $e;
 	}
 	if ($botresponse->success) {

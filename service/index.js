@@ -5,8 +5,9 @@ const _ = require('lodash');
 const request = require('request-promise-native');
 const nJwt = require('njwt');
 
-const VOUCHER_PAGES = 3;
-const INCLUDE_TAKE10S = false;
+const VOUCHER_PAGES = 5;
+const INCLUDE_TAKE10S = true;
+const ERROR_SCREENSHOT = true;
 
 let logger = require('logger').createLogger();
 logger.format = (level, date, message)=> {
@@ -30,13 +31,6 @@ class Scraper {
 
 		// Web app to respond to requests.
 		const app = express();
-		app.use(function(req, res, next) {
-			res.header("Access-Control-Allow-Origin", process.env.site_host);
-			res.header(
-				"Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept"
-			);
-			next();
-		});
 
 		app.get("/branch/:postcode", (req, res)=>{
 			let postcode = req.params.postcode.toUpperCase();
@@ -73,7 +67,7 @@ class Scraper {
 		let siteVoucherUrl = "https://" + process.env.site_host + "/bot/vouchers";
 		logger.info("First run: getting vouchers from site at " + siteVoucherUrl);
 		request(
-			siteVoucherUrl, 
+			siteVoucherUrl,
 			Object.assign(
 				{auth: {bearer: nJwt.create({}, process.env.bot_secret)}}, this.siteGetOpts
 			)
@@ -82,7 +76,7 @@ class Scraper {
 				this.vouchers = vouchers;
 				this.inProgress = false;
 				logger.info("Initialised with " + this.vouchers.length + " vouchers");
-				logger.debug("Initial voucher list: ", this.vouchers)
+				logger.debug("Initial voucher list: ", this.vouchers);
 			},
 			(e)=>logger.error("Failed to update vouchers from site", e)
 		);
@@ -98,7 +92,7 @@ class Scraper {
 	 */
 	processIfNotInProgress(res, fn) {
 		if (this.inProgress) {
-			logger.debug("Already running, aborting.")
+			logger.debug("Already running, aborting.");
 			res.status(400).send("Already processing");
 		} else {
 			this.inProgress = true;
@@ -126,7 +120,6 @@ class Scraper {
 			await this.page.setCookie({name: "show_voucher", value: "true"});
 			// Reload the this.page.
 			await this.page.reload({waitUntil: "domcontentloaded"});
-
 			for (let pageNum = 0; pageNum < numPages; pageNum++) {
 				if (this.stopped)
 					return;
@@ -166,7 +159,7 @@ class Scraper {
 				vouchers.push(...pageVouchers);
 
 				if (pageNum < numPages - 1) {
-					logger.debug("Clicking for next this.page");
+					logger.debug("Clicking for next page");
 					await this.click("a[rel='next']");
 					logger.debug("Waiting for navigation");
 					await this.page.waitForNavigation({waitUntil: "domcontentloaded"});
@@ -175,17 +168,14 @@ class Scraper {
 
 			logger.debug("Found vouchers" + JSON.stringify(vouchers));
 
-			if (INCLUDE_TAKE10S)
-				vouchers = [...Scraper.take10s(), ...vouchers];
-
 			this.vouchers = vouchers;
 
 		} catch (e) {
-			this.logError(e);
+			await this.logError(e);
 			this.inProgress = false;
 			return;
 		} finally {
-			this.page = null;
+			await this.closeBrowser();
 		}
 
 		await this.postToSite("vouchers", this.vouchers);
@@ -207,10 +197,10 @@ class Scraper {
 				await this.postToSite("branch", {branch_id: -1, postcode: postcode});
 				return;
 			}
-			this.logError(e);
+			await this.logError(e);
 			return;
 		} finally {
-			this.page = null;
+			await this.closeBrowser();
 		}
 
 		await this.postToSite("branch", {branch_id, postcode});
@@ -224,6 +214,11 @@ class Scraper {
 	 */
 	async workingVouchers(postcode, vouchers) {
 		let branch_id;
+		if (INCLUDE_TAKE10S) {
+			logger.info("Mystery TAKE10 vouchers are enabled");
+			vouchers = [...Scraper.take10s(), ...vouchers];
+		}
+		vouchers = [{code: "TAKE10CT", description: "Mystery TAKE10 code"}];
 		await this.initBrowser();
 		try {
 			branch_id = await this.loadBranch(postcode);
@@ -238,7 +233,7 @@ class Scraper {
 				logger.debug("Clicking to select first branch in list");
 				await this.page.click("article.store-details button.btn-primary");
 				logger.debug("Waiting for menu button");
-				await this.page.waitForSelector("#menu-selector", {visible: true});				
+				await this.page.waitForSelector("#menu-selector", {visible: true});
 			}
 			logger.debug("Clicking menu button");
 			await this.page.click("#menu-selector");
@@ -249,7 +244,7 @@ class Scraper {
 				await this.page.waitForSelector("i.arrival-close", {visible: true, timeout: 1000});
 				await this.page.click("i.arrival-close");
 			} catch (e) {
-				logger.debug("No popup found")
+				logger.debug("No popup found");
 			}
 			logger.debug("Remove popup iframes");
 			await this.page.evaluate(()=>$(".yie-holder").remove());
@@ -260,22 +255,30 @@ class Scraper {
 			logger.debug("Clicking to view basket");
 			await this.page.click("a.nav-link-basket");
 			logger.debug("Waiting for voucher code input to be visible");
-			await this.page.waitForSelector(".voucher-code-input > form > input", {visible: true});
-			logger.debug("Waiting for button to be visible");
-			await this.page.waitForSelector("footer > button", {visible: true});
+			let voucherInputSelector = "input[name='voucher-code']";
+			voucherInputSelector = await this.chooseVisible([
+				"form > " + voucherInputSelector, "div > " + voucherInputSelector
+			]);
+
+			logger.debug("Waiting for voucher code button to be visible");
+			let voucherButtonSelector = await this.chooseVisible([
+				"button.new-voucher-btn", "footer > button"
+			]);
 
 			logger.info("Entering codes");
 			for (let voucher of vouchers) {
 				if (this.stopped)
 					return;
 				logger.debug("Clearing any previous code");
-				await this.page.$eval(".voucher-code-input > form > input", (el)=>el.value="");
+				await this.page.$eval(voucherInputSelector, (el)=>el.value="");
 				logger.debug("Typing code " + voucher.code);
-				await this.page.type(".voucher-code-input > form > input", voucher.code, {delay: 20});
+				await this.page.type(voucherInputSelector, voucher.code, {delay: 20});
 				logger.debug("Clicking to add code");
-				await this.page.click("footer > button");
+				await this.page.click(voucherButtonSelector);
 				logger.debug("Waiting until code applied");
-				await this.page.waitForSelector("footer > button[disabled]", {hidden: true});
+				await this.page.waitForSelector(
+					voucherButtonSelector + "[disabled]", {hidden: true}
+				);
 				logger.debug("Checking for voucher choice modal");
 
 				try {
@@ -289,9 +292,11 @@ class Scraper {
 				}
 				logger.debug("Getting voucher success status");
 				voucher.status = await this.page.evaluate(()=>{
-					return $("div.voucher-code-input > p.help-block").text().trim();
+					return $("p.help-block").text().trim();
 				});
-				voucher.valid = !/invalid|expired|Voucher Used|already been used/i.test(voucher.status);
+				voucher.valid = !/invalid|expired|Voucher Used|already been used/i.test(
+					voucher.status
+				);
 				// await this.page.screenshot({path: voucher.code + ".png", fullthis.page: true});
 				if (voucher.valid) {
 					logger.info("Voucher worked!");
@@ -308,7 +313,9 @@ class Scraper {
 						logger.debug("Clearing voucher");
 						await this.page.click("[data-voucher] .basket-product-actions button");
 						logger.debug("Waiting for confirmation modal");
-						await this.page.waitForSelector('div.modal.in button[resource-name="OkButton"]');
+						await this.page.waitForSelector(
+							'div.modal.in button[resource-name="OkButton"]'
+						);
 						logger.debug("Confirming removal of voucher");
 						await this.page.click('div.modal.in button[resource-name="OkButton"]');
 						logger.debug("Waiting for voucher to clear");
@@ -330,11 +337,13 @@ class Scraper {
 				await this.postToSite("closed", {branch_id});
 				return;
 			}
-			this.logError(e);
+			await this.logError(e);
+			return;
 		} finally {
-			this.page = null;
+			await this.closeBrowser();
 		}
 
+		logger.debug("Posting to site:", vouchers);
 		await this.postToSite("working", {branch_id, vouchers});
 	}
 
@@ -345,7 +354,7 @@ class Scraper {
 	 */
 	async loadBranch(postcode) {
 		logger.info("Loading Dominos for postcode " + postcode);
-		await this.page.goto("https://www.dominos.co.uk");
+		await this.page.goto("https://www.dominos.co.uk", {waitUntil: "load"});
 		logger.debug("Waiting for store search input");
 		await this.page.waitForSelector("#store-finder-search");
 		logger.debug("Typing postcode");
@@ -363,15 +372,15 @@ class Scraper {
 			logger.warn("No branch found");
 			throw new NoBranchError();
 		} else {
-			logger.debug("Getting store ID from javascript")
+			logger.debug("Getting store ID from javascript");
 			await this.page.waitFor(
 				()=>window.initalStoreContext &&
 					window.initalStoreContext.sessionContext.storeId
 			);
 			return await this.page.evaluate(
 				()=>window.initalStoreContext.sessionContext.storeId
-			);			
-		}	
+			);
+		}
 	}
 
 	/**
@@ -385,9 +394,9 @@ class Scraper {
 			let url = "https://" + process.env.site_host + "/bot/" + endpoint,
 				response;
 			logger.debug("Posting to main site: " + url);
-			response = await request(url, Object.assign({ 
+			response = await request(url, Object.assign({
 				body: data, auth: {bearer: nJwt.create({}, process.env.bot_secret)}
-			}, this.sitePostOpts))
+			}, this.sitePostOpts));
 			logger.info(
 				"Updated " + endpoint + " on main site " + process.env.site_host + " with status " +
 				response.statusCode
@@ -397,29 +406,38 @@ class Scraper {
 		}
 	}
 
+
 	/**
-	 * Fire up the Chrome headless browser and open a blank this.page.
+	 * Fire up the Chrome headless browser and open a blank page.
 	 */
 	async initBrowser() {
 		// Only one request at once...
-		if (this.page)
+		if (this.browser)
 			throw new Error("Attempting to open more than one browser session");
 		try {
 			// Open browser.
-			const browser = await puppeteer.launch({
+			this.browser = await puppeteer.launch({
 				args: [
 					'--no-sandbox',
 					'--disable-setuid-sandbox'
 				]
 			});
 			// Open new tab in browser.
-			this.page = await browser.newPage();
+			this.page = await this.browser.newPage();
 			this.page.setViewport({width: 1280, height: 720});
 			// Log site console logs.
 			this.page.on('console', msg => logger.debug('Page LOG:', msg.text));
 		} catch (e) {
-			this.logError(e);
+			await this.logError(e);
 		}
+	}
+
+	/**
+	 * Close the browser
+	 */
+	async closeBrowser() {
+		await this.browser.close();
+		this.browser = null;
 	}
 
 	/**
@@ -429,6 +447,7 @@ class Scraper {
 	 * some value of order (commonly 20 or 30 GBP).
 	 */
 	static take10s() {
+		logger.debug("Generating TAKE10 vouchers");
 		let generated = [],
 			alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""),
 			i,j;
@@ -460,6 +479,27 @@ class Scraper {
 	}
 
 	/**
+	 * Choose the selector from a list of selectors that exists and is not `display: none`.
+	 */
+	async chooseVisible(selectors) {
+		await this.page.waitForSelector(selectors.join(","));
+		let startTime = Date.now();
+		while (Date.now() - startTime < 10000) {
+			for (let selector of selectors) {
+				logger.debug("Checking selector for visibility", selector);
+				if (await this.page.evaluate((selector)=>{
+					var el = document.querySelector(selector);
+					if (!el)
+						return false;
+					return !!el.offsetParent;
+				}, selector)) return selector;
+			}
+			await this.page.waitFor(1000);
+		}
+		throw new Error("Found selectors but none were visible");
+	}
+
+	/**
 	 * Take a screenshot and log the error.
 	 *
 	 * @param {Response} res express response object
@@ -467,8 +507,13 @@ class Scraper {
 	 */
 	async logError(e) {
 		logger.error("Unexpected exception", e);
-		if (this.page)
-			await this.page.screenshot({path: "error.png", fullPage: true});
+		if (this.page) {
+			// logger.debug(await this.page.content());
+			// Crashes unless enough memory (shm-size) is given.
+			if (ERROR_SCREENSHOT) {
+				await this.page.screenshot({path: "error.png", fullPage: true});
+			};
+		}
 
 		await this.postToSite("error", {error: e.toString()});
 	}
