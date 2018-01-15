@@ -6,7 +6,7 @@ const request = require('request-promise-native');
 const nJwt = require('njwt');
 
 const VOUCHER_PAGES = 5;
-const INCLUDE_TAKE10S = true;
+const INCLUDE_TAKE10S = false;
 const ERROR_SCREENSHOT = true;
 
 let logger = require('logger').createLogger();
@@ -218,7 +218,6 @@ class Scraper {
 			logger.info("Mystery TAKE10 vouchers are enabled");
 			vouchers = [...Scraper.take10s(), ...vouchers];
 		}
-		vouchers = [{code: "TAKE10CT", description: "Mystery TAKE10 code"}];
 		await this.initBrowser();
 		try {
 			branch_id = await this.loadBranch(postcode);
