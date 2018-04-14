@@ -175,6 +175,8 @@ class Scraper {
 				}
 			}
 
+			vouchers = _.uniq(vouchers, (voucher)=>voucher.code);
+
 			logger.debug("Found vouchers" + JSON.stringify(vouchers));
 
 			this.vouchers = vouchers;
