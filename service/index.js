@@ -81,7 +81,6 @@ class Scraper {
 			(e)=>logger.error("Failed to update vouchers from site", e)
 		);
 
-		logger.debug("Clearing any previous error state");
 	}
 
 	/**
@@ -123,7 +122,7 @@ class Scraper {
 			for (let pageNum = 0; pageNum < numPages; pageNum++) {
 				if (this.stopped)
 					return;
-				logger.info("On this.page " + (pageNum + 1));
+				logger.info("On page " + (pageNum + 1));
 
 				logger.debug("Waiting for vouchers to show");
 				await this.page.waitForSelector("article.thread--voucher");
@@ -135,12 +134,15 @@ class Scraper {
 					for (let thread of $threads) {
 						let $thread = $(thread);
 						vouchers.push({
-							description: $thread.find("strong.thread-title").text().trim(),
-							codeTxt: $thread.find("div.voucher.clickable").text().trim()
+							description: $thread.find("span.thread-title span")
+								.filter(":visible:not(:has(*))").text().trim(),
+							codeTxt: $thread.find("input.clickable").attr("value") || ""
 						});
 					}
 					return vouchers;
 				});
+
+				logger.debug("Got raw voucher data", pageVouchers);
 
 				logger.debug("Cleaning voucher data");
 				pageVouchers = pageVouchers.reduce((vouchers, voucher)=>{
@@ -151,12 +153,19 @@ class Scraper {
 						// Dominos codes are all 8 characters long.
 						if (code.length === 8) {
 							extracted.push({code, description});
+						} else {
+							logger.warn(
+								`Found invalid code '${code}' with description '${description}'`
+							);
 						}
 					}
 					return [...vouchers, ...extracted];
 				}, []);
 
 				vouchers.push(...pageVouchers);
+
+				if (!await this.page.$("a[rel='next']"))
+					break;
 
 				if (pageNum < numPages - 1) {
 					logger.debug("Clicking for next page");
